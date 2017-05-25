@@ -9,7 +9,8 @@ case class GrantHandlerResult[U](
   expiresIn: Option[Long],
   refreshToken: Option[String],
   scope: Option[String],
-  params: Map[String, String]
+  params: Map[String, String],
+  idToken: Option[String]
 )
 
 trait GrantHandler {
@@ -26,27 +27,33 @@ trait GrantHandler {
    * Returns valid access token.
    */
   protected def issueAccessToken[U](handler: AuthorizationHandler[U], authInfo: AuthInfo[U])(implicit ctx: ExecutionContext): Future[GrantHandlerResult[U]] = {
-    handler.getStoredAccessToken(authInfo).flatMap {
-      case Some(token) if shouldRefreshAccessToken(token) => token.refreshToken.map {
-        handler.refreshAccessToken(authInfo, _)
-      }.getOrElse {
-        handler.createAccessToken(authInfo)
+    for {
+      accessToken <- handler.getStoredAccessToken(authInfo).flatMap {
+        case Some(token) if shouldRefreshAccessToken(token) => token.refreshToken.map {
+          handler.refreshAccessToken(authInfo, _)
+        }.getOrElse {
+          handler.createAccessToken(authInfo)
+        }
+        case Some(token) => Future.successful(token)
+        case None => handler.createAccessToken(authInfo)
       }
-      case Some(token) => Future.successful(token)
-      case None => handler.createAccessToken(authInfo)
-    }.map(createGrantHandlerResult(authInfo, _))
+      id <- if(authInfo.scope.isDefined && authInfo.scope.contains("openid")) {
+        handler.createIDToken(authInfo, Some(accessToken.token))
+      } else Future.successful(None)
+    } yield createGrantHandlerResult(authInfo, accessToken, id)
   }
 
   protected def shouldRefreshAccessToken(token: AccessToken) = token.isExpired
 
-  protected def createGrantHandlerResult[U](authInfo: AuthInfo[U], accessToken: AccessToken) = GrantHandlerResult(
+  protected def createGrantHandlerResult[U](authInfo: AuthInfo[U], accessToken: AccessToken, id: Option[String] = None) = GrantHandlerResult(
     authInfo,
     "Bearer",
     accessToken.token,
     accessToken.expiresIn,
     accessToken.refreshToken,
     accessToken.scope,
-    accessToken.params
+    accessToken.params,
+    id
   )
 
 }
@@ -126,37 +133,8 @@ class AuthorizationCode extends GrantHandler {
       val f = issueAccessToken(handler, authInfo)
       for {
         accessToken <- f
-        deleteResult <- handler.deleteAuthCode(code)
+        _ <- handler.deleteAuthCode(code)
       } yield accessToken
     }
   }
-
-}
-
-class Implicit extends GrantHandler {
-
-  override def handleRequest[U](maybeValidatedClientCred: Option[ClientCredential], request: AuthorizationRequest, handler: AuthorizationHandler[U])(implicit ctx: ExecutionContext): Future[GrantHandlerResult[U]] = {
-    val clientId = maybeValidatedClientCred.getOrElse(throw new InvalidRequest("Client credential is required")).clientId
-    val implicitRequest = ImplicitRequest(request)
-
-    handler.findUser(maybeValidatedClientCred, implicitRequest).flatMap { maybeUser =>
-      val user = maybeUser.getOrElse(throw new InvalidGrant("user cannot be authenticated"))
-      val scope = implicitRequest.scope
-      val authInfo = AuthInfo(user, Some(clientId), scope, None)
-
-      issueAccessToken(handler, authInfo)
-    }
-  }
-
-  /**
-   * Implicit grant doesn't support refresh token
-   */
-  protected override def shouldRefreshAccessToken(accessToken: AccessToken) = false
-
-  /**
-   * Implicit grant must not return refresh token
-   */
-  protected override def createGrantHandlerResult[U](authInfo: AuthInfo[U], accessToken: AccessToken) =
-    super.createGrantHandlerResult(authInfo, accessToken).copy(refreshToken = None)
-
 }

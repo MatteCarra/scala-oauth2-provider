@@ -1,6 +1,8 @@
 val commonDependenciesInTestScope = Seq(
   "org.scalatest" %% "scalatest" % "3.0.1" % "test",
-  "ch.qos.logback" % "logback-classic" % "1.1.8" % "test"
+  "ch.qos.logback" % "logback-classic" % "1.1.8" % "test",
+  "com.pauldijou" %% "jwt-core" % "0.12.1",
+  "joda-time" % "joda-time" % "2.9.9"
 )
 
 val unusedWarnings = Seq(

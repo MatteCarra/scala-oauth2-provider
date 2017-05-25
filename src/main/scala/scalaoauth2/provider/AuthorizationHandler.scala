@@ -51,7 +51,7 @@ import scala.concurrent.Future
  * </ul>
  *
  */
-trait AuthorizationHandler[U] {
+trait AuthorizationHandler[U] extends OpenIdHandler[U] {
 
   /**
    * Verify proper client with parameters for issue an access token.
